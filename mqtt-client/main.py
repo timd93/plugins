@@ -153,6 +153,7 @@ class MQTTClient(OMPluginBase):
             self.client.publish(topic, json.dumps(data), retain=retain)
         except Exception as ex:
             self.logger('Error sending data to broker: {0}'.format(ex))
+
     """Send RAW data"""
     def _sendraw(self, topic, data, retain=True):
         try:
@@ -231,6 +232,7 @@ class MQTTClient(OMPluginBase):
                                 'timestamp': time.time()}
                         thread = Thread(target=self._send, args=('homeassistant/light/{0}/config'.format(output_id), data))
                         thread.start()
+                        '''Publish Light State for Home Assistant'''
                         thread = Thread(target=self._sendraw, args=('homeassistant/light/{0}/state'.format(output_id), state))
                         thread.start()
             except Exception as ex:
