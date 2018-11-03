@@ -13,12 +13,13 @@ from serial_utils import CommunicationTimedOutException
 
 class MQTTClient(OMPluginBase):
     """
-    An MQTT client plugin for sending/receiving data to/from an MQTT broker.
-    For more info: https://github.com/openmotics/plugins/blob/master/mqtt-client/README.md
-    """
+	An MQTT client plugin for sending/receiving data to/from an MQTT broker.
+	For more info: https://github.com/openmotics/plugins/blob/master/mqtt-client/README.md
+	"""
 
     name = 'MQTTClient'
-    version = '1.3.2'
+    version = '1.3.9'
+    version2 = 'TD-HOMEASSISTANT'
     interfaces = [('config', '1.0')]
 
     config_description = [{'name': 'broker_ip',
@@ -152,6 +153,12 @@ class MQTTClient(OMPluginBase):
             self.client.publish(topic, json.dumps(data), retain=retain)
         except Exception as ex:
             self.logger('Error sending data to broker: {0}'.format(ex))
+    """Send RAW data"""
+    def _sendraw(self, topic, data, retain=True):
+        try:
+            self.client.publish(topic, data, retain=retain)
+        except Exception as ex:
+            self.logger('Error sending data to broker: {0}'.format(ex))
 
     @input_status
     def input_status(self, status):
@@ -196,7 +203,8 @@ class MQTTClient(OMPluginBase):
                         if dimmer != on_outputs[output_id]:
                             changed = True
                             outputs[output_id]['dimmer'] = on_outputs[output_id]
-                            self._log('Output {0} ({1}) changed to level {2}'.format(output_id, name, on_outputs[output_id]))
+                            self._log(
+                                'Output {0} ({1}) changed to level {2}'.format(output_id, name, on_outputs[output_id]))
                             self.logger('Output {0} changed to level {1}'.format(output_id, on_outputs[output_id]))
                     elif status != 0:
                         changed = True
@@ -205,16 +213,25 @@ class MQTTClient(OMPluginBase):
                         self.logger('Output {0} changed to OFF'.format(output_id))
                     if changed is True:
                         if outputs[output_id]['module_type'] == 'output':
-                            level = 100
+                            level = 255
+                            state = 'ON'
                         else:
-                            level = dimmer
+                            """Convert percentage to 0 - 255 scale"""
+                            level = dimmer * 2.55
+                            state = 'ON'
                         if outputs[output_id]['status'] == 0:
                             level = 0
+                            state = 'OFF'
                         data = {'id': output_id,
                                 'name': name,
-                                'value': level,
+                                'command_topic': 'openmotics/set/output/{0}'.format(output_id),
+                                'state_topic': 'homeassistant/light/{0}/state'.format(output_id),
+                                'status': state,
+                                'brightness': level,
                                 'timestamp': time.time()}
-                        thread = Thread(target=self._send, args=('openmotics/events/output/{0}'.format(output_id), data))
+                        thread = Thread(target=self._send, args=('homeassistant/light/{0}/config'.format(output_id), data))
+                        thread.start()
+                        thread = Thread(target=self._sendraw, args=('homeassistant/light/{0}/state'.format(output_id), state))
                         thread.start()
             except Exception as ex:
                 self.logger('Error processing outputs: {0}'.format(ex))
@@ -250,21 +267,23 @@ class MQTTClient(OMPluginBase):
                 output_id = int(msg.topic.replace(base_topic, ''))
                 if output_id in self._outputs:
                     output = self._outputs[output_id]
-                    value = int(msg.payload)
-                    if value > 0:
+                    value = str(msg.payload)
+                    if value == "ON":
                         is_on = 'true'
                         log_value = 'ON'
                     else:
                         is_on = 'false'
                         log_value = 'OFF'
                     dimmer = None
+                    '''TEMP FIX FOR STRING ISSUE'''
                     if output['module_type'] == 'dimmer':
-                        dimmer = None if value == 0 else max(0, min(100, value))
-                        if value > 0:
+                        dimmer = None if value == "OFF" else max(0, min(100, 100))
+                        if value == "ON":
                             log_value = 'ON ({0}%)'.format(value)
                     result = json.loads(self.webinterface.set_output(None, output_id, is_on, dimmer, None))
                     if result['success'] is False:
-                        log_message = 'Failed to set output {0} to {1}: {2}'.format(output_id, log_value, result.get('msg', 'Unknown error'))
+                        log_message = 'Failed to set output {0} to {1}: {2}'.format(output_id, log_value,
+                                                                                    result.get('msg', 'Unknown error'))
                         self._log(log_message)
                         self.logger(log_message)
                     else:
